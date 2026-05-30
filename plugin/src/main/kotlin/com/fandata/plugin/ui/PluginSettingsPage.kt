@@ -23,8 +23,6 @@ import com.fandata.plugin.login.LoginJsExtensions
 import io.nightfish.lightnovelreader.api.ui.components.SettingsClickableEntry
 import io.nightfish.lightnovelreader.api.ui.components.SettingsSwitchEntry
 import io.nightfish.lightnovelreader.api.userdata.UserDataRepositoryApi
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.atomic.AtomicReference
 
 @Composable
 fun PluginSettingsPage(paddingValues: PaddingValues, userDataRepo: UserDataRepositoryApi) {
@@ -38,7 +36,6 @@ fun PluginSettingsPage(paddingValues: PaddingValues, userDataRepo: UserDataRepos
             .clip(RoundedCornerShape(16.dp)),
         verticalArrangement = Arrangement.spacedBy(2.dp)
     ) {
-        // 书源信息
         val src = BookSourceManager.getCurrent()
         if (src != null) {
             Card(
@@ -58,50 +55,37 @@ fun PluginSettingsPage(paddingValues: PaddingValues, userDataRepo: UserDataRepos
         Spacer(Modifier.height(8.dp))
         Text("功能开关", modifier = Modifier.padding(horizontal = 16.dp),
             style = MaterialTheme.typography.titleSmall)
-        // 段评
         val pr by userDataRepo.booleanUserData("paragraph_review")
             .getFlowWithDefault(false).collectAsState(false)
         SettingsSwitchEntry(
             modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainer),
-            title = "段落评论",
-            description = "在正文中显示段落评论标记",
-            checked = pr,
-            booleanUserData = userDataRepo.booleanUserData("paragraph_review")
+            title = "段落评论", description = "在正文中显示段落评论标记",
+            checked = pr, booleanUserData = userDataRepo.booleanUserData("paragraph_review")
         )
-        // 书架同步
         val bs by userDataRepo.booleanUserData("bookshelf_sync")
             .getFlowWithDefault(true).collectAsState(true)
         SettingsSwitchEntry(
             modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainer),
-            title = "书架同步",
-            description = "自动同步阅读进度到服务器",
-            checked = bs,
-            booleanUserData = userDataRepo.booleanUserData("bookshelf_sync")
+            title = "书架同步", description = "自动同步阅读进度到服务器",
+            checked = bs, booleanUserData = userDataRepo.booleanUserData("bookshelf_sync")
         )
-        // 阅读提示
         val rt by userDataRepo.booleanUserData("reading_toast")
             .getFlowWithDefault(false).collectAsState(false)
         SettingsSwitchEntry(
             modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainer),
-            title = "阅读提示",
-            description = "显示操作的 Toast 提示",
-            checked = rt,
-            booleanUserData = userDataRepo.booleanUserData("reading_toast")
+            title = "阅读提示", description = "显示操作的 Toast 提示",
+            checked = rt, booleanUserData = userDataRepo.booleanUserData("reading_toast")
         )
-        // 显示来源
         val ss by userDataRepo.booleanUserData("show_source")
             .getFlowWithDefault(false).collectAsState(false)
         SettingsSwitchEntry(
             modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainer),
-            title = "显示来源",
-            description = "在目录中显示章节来源",
-            checked = ss,
-            booleanUserData = userDataRepo.booleanUserData("show_source")
+            title = "显示来源", description = "在目录中显示章节来源",
+            checked = ss, booleanUserData = userDataRepo.booleanUserData("show_source")
         )
         Spacer(Modifier.height(8.dp))
         Text("账号与操作", modifier = Modifier.padding(horizontal = 16.dp),
             style = MaterialTheme.typography.titleSmall)
-        // 登录按钮 - 使用 Compose Dialog
         SettingsClickableEntry(
             modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainer),
             title = "登录书源账号",
@@ -110,7 +94,6 @@ fun PluginSettingsPage(paddingValues: PaddingValues, userDataRepo: UserDataRepos
             CookieStore.init(context)
             showLoginDialog = true
         }
-        // 导入书源
         SettingsClickableEntry(
             modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainer),
             title = "导入书源",
@@ -119,11 +102,9 @@ fun PluginSettingsPage(paddingValues: PaddingValues, userDataRepo: UserDataRepos
             Toast.makeText(context, "将书源 JSON 放到 /Documents/fandata/ 目录后重启插件",
                 Toast.LENGTH_LONG).show()
         }
-        // 重置
         SettingsClickableEntry(
             modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainer),
-            title = "重置设置",
-            description = "恢复所有功能开关为默认值"
+            title = "重置设置", description = "恢复所有功能开关为默认值"
         ) {
             userDataRepo.booleanUserData("paragraph_review").set(false)
             userDataRepo.booleanUserData("bookshelf_sync").set(true)
@@ -133,20 +114,18 @@ fun PluginSettingsPage(paddingValues: PaddingValues, userDataRepo: UserDataRepos
         }
     }
 
-    // 登录对话框
     if (showLoginDialog) {
         val src = BookSourceManager.getCurrent()
         if (src != null) {
-            LoginDialog(
-                source = src,
-                onDismiss = { showLoginDialog = false }
-            )
+            LoginDialog(source = src, onDismiss = { showLoginDialog = false })
         }
     }
 }
 
 /**
  * 登录对话框 - 支持 WebView 模式和自定义 UI 模式
+ * 自定义 UI 模式下，按钮的 action 字段决定调用哪个 JS 函数
+ * BrowserOpener 嵌套 WebView 弹窗支持 startBrowserAwait()
  */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
@@ -158,6 +137,24 @@ fun LoginDialog(
     var statusMessage by remember { mutableStateOf("") }
     val loginMode = remember { LoginHelper.getLoginMode(source) }
 
+    // 嵌套 WebView 弹窗状态
+    var showBrowserDialog by remember { mutableStateOf(false) }
+    var browserUrl by remember { mutableStateOf("") }
+    var browserTitle by remember { mutableStateOf("") }
+    val browserCallbackRef = remember { mutableStateOf<((String) -> Unit)?>(null) }
+
+    // BrowserOpener 实现 - 打开嵌套 WebView 弹窗
+    val browserOpener = remember {
+        object : LoginJsExtensions.BrowserOpener {
+            override fun openBrowserForResult(url: String, title: String, callback: (String) -> Unit) {
+                browserUrl = url
+                browserTitle = title
+                browserCallbackRef.value = callback
+                showBrowserDialog = true
+            }
+        }
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("登录 - ${source.bookSourceName}") },
@@ -165,7 +162,6 @@ fun LoginDialog(
             Column {
                 when (loginMode) {
                     LoginHelper.LoginMode.WebView -> {
-                        // WebView 登录模式
                         val loginUrl = remember { LoginHelper.getWebViewLoginUrl(source) }
                         if (loginUrl != null) {
                             AndroidView(
@@ -195,11 +191,9 @@ fun LoginDialog(
                         }
                     }
                     LoginHelper.LoginMode.CustomUI -> {
-                        // 自定义 UI 登录模式
                         val rows = remember { LoginHelper.getLoginUiRows(source) }
                         val formData = remember { mutableStateMapOf<String, String>() }
 
-                        // 自定义 UI 表单
                         Column(
                             modifier = Modifier.verticalScroll(rememberScrollState()),
                             verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -224,7 +218,7 @@ fun LoginDialog(
                                                     LoginHelper.executeAction(
                                                         source, formData.toMap(), action,
                                                         createLoginCallback(context) { statusMessage = it },
-                                                        null // BrowserOpener 暂不支持在 Dialog 中使用
+                                                        browserOpener
                                                     )
                                                 } else {
                                                     LoginHelper.executeLogin(
@@ -250,12 +244,23 @@ fun LoginDialog(
                                             )
                                         }
                                     }
+                                    "select" -> {
+                                        Text(row.name, style = MaterialTheme.typography.bodyMedium)
+                                        // Simplified select - show as text buttons
+                                        row.chars?.filterNotNull()?.forEach { option ->
+                                            TextButton(onClick = { formData[row.name] = option }) {
+                                                Text(option,
+                                                    color = if (formData[row.name] == option)
+                                                        MaterialTheme.colorScheme.primary
+                                                    else MaterialTheme.colorScheme.onSurface)
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
                     }
                 }
-                // 状态消息
                 if (statusMessage.isNotBlank()) {
                     Spacer(Modifier.height(8.dp))
                     Text(statusMessage, style = MaterialTheme.typography.bodySmall,
@@ -265,7 +270,6 @@ fun LoginDialog(
         },
         confirmButton = {
             TextButton(onClick = {
-                // 保存 Cookie
                 val url = source.bookSourceUrl
                 val cookie = CookieManager.getInstance().getCookie(url)
                 if (cookie != null && cookie.isNotBlank()) {
@@ -273,14 +277,97 @@ fun LoginDialog(
                     Toast.makeText(context, "Cookie 已保存", Toast.LENGTH_SHORT).show()
                 }
                 onDismiss()
-            }) {
-                Text("完成")
-            }
+            }) { Text("完成") }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("取消")
+            TextButton(onClick = onDismiss) { Text("取消") }
+        }
+    )
+
+    // 嵌套 WebView 弹窗 - 供 startBrowserAwait() 使用
+    if (showBrowserDialog) {
+        BrowserWebViewDialog(
+            url = browserUrl,
+            title = browserTitle,
+            onDismiss = {
+                showBrowserDialog = false
+                browserCallbackRef.value?.invoke("")
+                browserCallbackRef.value = null
+            },
+            onComplete = { html ->
+                showBrowserDialog = false
+                browserCallbackRef.value?.invoke(html)
+                browserCallbackRef.value = null
             }
+        )
+    }
+}
+
+/**
+ * WebView 浏览器弹窗 - 供 startBrowserAwait() 使用
+ * 用户在 WebView 中操作，点击"完成"后返回 HTML 内容
+ */
+@SuppressLint("SetJavaScriptEnabled")
+@Composable
+fun BrowserWebViewDialog(
+    url: String,
+    title: String,
+    onDismiss: () -> Unit,
+    onComplete: (String) -> Unit
+) {
+    var webViewRef by remember { mutableStateOf<WebView?>(null) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title.ifBlank { "浏览器" }) },
+        text = {
+            AndroidView(
+                factory = { ctx ->
+                    WebView(ctx).apply {
+                        settings.javaScriptEnabled = true
+                        settings.domStorageEnabled = true
+                        settings.useWideViewPort = true
+                        settings.loadWithOverviewMode = true
+                        settings.userAgentString = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+                        webViewClient = object : WebViewClient() {
+                            override fun onReceivedSslError(view: WebView?, handler: SslErrorHandler?, error: SslError?) {
+                                handler?.proceed()
+                            }
+                            override fun onPageFinished(view: WebView?, pageUrl: String?) {
+                                pageUrl?.let {
+                                    val cookie = CookieManager.getInstance().getCookie(it)
+                                    if (cookie != null) CookieStore.setCookieByUrl(it, cookie)
+                                }
+                            }
+                        }
+                        // 处理 data: URL 和普通 URL
+                        loadUrl(url)
+                        webViewRef = this
+                    }
+                },
+                modifier = Modifier.fillMaxWidth().height(500.dp)
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                webViewRef?.evaluateJavascript(
+                    "(function() { try { return document.documentElement.outerHTML; } catch(e) { return '<error>' + e.message; } })()"
+                ) { html ->
+                    val cleanHtml = html
+                        ?.removeSurrounding("\"")
+                        ?.replace("\\u003C", "<")
+                        ?.replace("\\u003E", ">")
+                        ?.replace("\\u0026", "&")
+                        ?.replace("\\\"", "\"")
+                        ?.replace("\\n", "\n")
+                        ?.replace("\\t", "\t")
+                        ?: ""
+                    onComplete(cleanHtml)
+                }
+            }) { Text("完成") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
         }
     )
 }
