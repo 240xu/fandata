@@ -1,0 +1,24 @@
+﻿# Gradle
+.gradle/
+build/
+**/build/
+!gradle/wrapper/gradle-wrapper.jar
+local.properties
+
+# IDE
+.idea/
+*.iml
+.DS_Store
+
+# Android
+*.apk
+*.ap_
+*.aab
+*.dex
+*.class
+
+# Kotlin
+.kotlin/
+
+# Logs
+*.log
