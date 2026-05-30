@@ -197,7 +197,11 @@ class JsExtensions(
 
     // ==================== Cookie 管理 ====================
 
-    fun getCookie(domain: String, key: String): String {
+    fun getCookie(domain: String): String {
+        return httpHelper?.cookieStore?.get(domain) ?: cookieStore[domain] ?: ""
+    }
+
+fun getCookie(domain: String, key: String): String {
         // 从 httpHelper 的 cookieStore 获取
         val cookies = httpHelper?.cookieStore?.get(domain) ?: cookieStore[domain] ?: return ""
         return try {
@@ -249,7 +253,14 @@ class JsExtensions(
     fun getCloudSettings(force: Boolean = false): Map<String, Any?>? {
         if (cloudSettings != null && !force) return cloudSettings
         try {
-            val url = "${sourceUrl.trimEnd('/')}/settings"
+            val base = if (sourceUrl.startsWith("http")) sourceUrl.trimEnd('/')
+                       else httpHelper?.cachedBaseUrl?.trimEnd('/') ?: ""
+            if (base.isEmpty()) {
+                Log.w(TAG, "getCloudSettings: no valid base URL")
+                return cloudSettings
+            }
+            val url = "${base}/static/source_config/config.json"
+            Log.d(TAG, "getCloudSettings: ${url.take(100)}")
             val response = ajax(url)
             if (response.isNotBlank()) {
                 cloudSettings = com.google.gson.Gson().fromJson(response, Map::class.java) as? Map<String, Any?>
@@ -311,7 +322,9 @@ class JsExtensions(
     private fun resolveUrl(url: String): String {
         if (url.isBlank()) return url
         if (url.startsWith("http://") || url.startsWith("https://") || url.startsWith("data:")) return url
-        val base = currentBaseUrl.ifBlank { sourceUrl }
+        var base = currentBaseUrl.ifBlank { "" }
+        if (base.isBlank() || !base.startsWith("http")) base = httpHelper?.cachedBaseUrl ?: ""
+        if (base.isBlank() || !base.startsWith("http")) { try { getCloudSettings(false); base = httpHelper?.cachedBaseUrl ?: "" } catch (_: Exception) {} }
         if (base.isBlank()) return url
         return try {
             java.net.URL(java.net.URL(base), url).toString()

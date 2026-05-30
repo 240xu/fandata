@@ -52,8 +52,16 @@ class AnalyzeUrl(
         ruleUrl = mUrl
         Log.d(TAG, "init ruleUrl: ${ruleUrl.take(300)}")
         analyzeJs()
-        replaceKeyPage()
-        analyzeUrl()
+        // Detect if JS returned JSON data (exploreUrl case) instead of a URL
+        val trimmed = ruleUrl.trimStart()
+        if (trimmed.startsWith("[") || (trimmed.startsWith("{") && !trimmed.startsWith("http"))) {
+            Log.d(TAG, "JS returned JSON data, treating as data URL content")
+            dataUrlContent = ruleUrl
+            type = "data"
+        } else {
+            replaceKeyPage()
+            analyzeUrl()
+        }
         source?.getHeaderMap()?.let { headerMap.putAll(it) }
     }
 
@@ -136,6 +144,10 @@ class AnalyzeUrl(
             rule.startsWith("ajax:", true) -> { method = "POST"; rule = rule.removePrefix("ajax:").trim() }
             rule.startsWith("@ajax:", true) -> { method = "POST"; rule = rule.removePrefix("@ajax:").trim() }
         }
+        if (rule.startsWith("data:")) {
+            handleDataUrl(rule)
+            return
+        }
         // 分离 URL 和请求体（以,{" 开头的为请求体）
         val bodySep = rule.indexOf(",{\"")
         if (bodySep > 0) {
@@ -146,10 +158,7 @@ class AnalyzeUrl(
         }
         Log.d(TAG, "analyzeUrl: url=${url.take(200)}, method=$method")
         // 处理 data: URL
-        if (url.startsWith("data:")) {
-            handleDataUrl(url)
-            return
-        }
+
         // 编码 URL 中的中文
         url = encodeUrl(url)
     }
@@ -288,7 +297,7 @@ class AnalyzeUrl(
             // 注册全局函数（getVariable, setVariable, BaseUrl 等）
             JsBridge.registerGlobalFunctions(engine, jsExtensions)
             // 加载 jsLib（书源中定义的公共函数，如 getServerHost() 等）
-            source?.jsLib?.let { engine.evalJsLib(it) }
+            source?.jsLib?.let { engine.evalJsLib(it, source, jsExtensions) }
             // 执行
             val result = engine.evaluate(script)
             Log.d(TAG, "evalJS result: ${result?.toString()?.take(200)}")

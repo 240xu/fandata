@@ -32,6 +32,8 @@ data class BookSource(
     var weight: Int = 0
 ) : BaseSource {
     companion object {
+        private val DEFAULT_HOSTS = listOf("https://v1.gyks.cf","https://v2.gyks.cf","https://v3.gyks.cf","https://v4.gyks.cf","https://v5.gyks.cf","https://v6.gyks.cf","https://v7.gyks.cf","http://101.35.133.34:8888")
+        private val DEFAULT_VARIABLE_JSON: String by lazy { Gson().toJson(mapOf("hosts" to DEFAULT_HOSTS, "线路" to DEFAULT_HOSTS[0], "云端配置" to mapOf("version" to "0"))) }
         val GSON: Gson = Gson()
         fun fromJson(json: String): BookSource? {
             return try { GSON.fromJson(json, BookSource::class.java) } catch (_: Exception) { null }
@@ -66,14 +68,64 @@ data class BookSource(
         return map
     }
 
-    // �û���Ϣ���棨�ڴ漶���� ConfigProvider �־û���
+    // 用户信息缓存（内存级别，由 ConfigProvider 持久化）
     private val loginInfoCache = mutableMapOf<String, String>()
     private val variableCache = mutableMapOf<String, String>()
+
+    fun initDefaultVariable(hostsFromJsLib: List<String>? = null) {
+        if (variableCache.containsKey("variable")) return
+        val defHosts = hostsFromJsLib ?: DEFAULT_HOSTS
+        val defaultMap = hashMapOf<String, Any?>(
+            "hosts" to defHosts,
+            "线路" to defHosts[0],
+            "云端配置" to mapOf("version" to "0", "hosts" to defHosts)
+        )
+        putVariable(GSON.toJson(defaultMap))
+    }
 
     override fun getLoginInfo(): String? = loginInfoCache["loginInfo"]
     override fun putLoginInfo(info: String) { loginInfoCache["loginInfo"] = info }
     override fun removeLoginInfo() { loginInfoCache.remove("loginInfo") }
-    override fun getVariable(): String = variableCache["variable"] ?: ""
+    override fun getVariable(): String = variableCache["variable"] ?: DEFAULT_VARIABLE_JSON
+    // setVariable 单参数（jsLib 中 source.setVariable(JSON.stringify(data)) 调用）
+    @Suppress("unused")
+    fun setVariable(json: String) {
+        putVariable(json)
+    }
+    // setVariable 双参数（jsLib 中 source.setVariable(key, value) 调用）
+    @Suppress("unused")
+    fun setVariable(key: String, value: Any?) {
+        android.util.Log.d("BookSource", "setVariable(key=${'$'}$key, value=${'$'}${value?.toString()?.take(100)})")
+        val map = try {
+            @Suppress("UNCHECKED_CAST")
+            GSON.fromJson(getVariable(), MutableMap::class.java) as? MutableMap<String, Any?>
+        } catch (e: Exception) { 
+            android.util.Log.w("BookSource", "setVariable parse error: ${'$'}${e.message}")
+            null 
+        } ?: mutableMapOf()
+        if (value != null) map[key] = value else map.remove(key)
+        putVariable(GSON.toJson(map))
+        android.util.Log.d("BookSource", "setVariable done, keys=${'$'}${map.keys}")
+    }
+    // setVariable 三参数（jsLib 中 source.setVariable(key, value, false) 调用）
+    @Suppress("unused")
+    fun setVariable(key: String, value: Any?, showToast: Boolean) {
+        setVariable(key, value)
+    }
+    fun getVariable(key: String): Any? {
+        return try {
+            val raw = getVariable()
+            android.util.Log.d("BookSource", "getVariable(key=${'$'}$key), raw=${'$'}${raw?.take(200)}")
+            @Suppress("UNCHECKED_CAST")
+            val map = GSON.fromJson(raw, Map::class.java) as? Map<String, Any?>
+            val result = map?.get(key)
+            android.util.Log.d("BookSource", "getVariable result=${'$'}${result?.toString()?.take(100)}")
+            result
+        } catch (e: Exception) { 
+            android.util.Log.e("BookSource", "getVariable error: ${'$'}${e.message}")
+            null 
+        }
+    }
     override fun putVariable(variable: String?) {
         if (variable != null) variableCache["variable"] = variable else variableCache.remove("variable")
     }

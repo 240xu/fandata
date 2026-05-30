@@ -56,7 +56,8 @@ class AnalyzeRule(
     fun getString(ruleStr: String?, isUrl: Boolean = false): String {
         if (ruleStr.isNullOrBlank()) return ""
         return try {
-            val rules = splitSourceRule(ruleStr)
+            val processed = processExpression(ruleStr)
+            val rules = splitSourceRule(processed)
             getStringInternal(rules, isUrl = isUrl)
         } catch (e: Exception) {
             Log.e(TAG, "getString error: ${e.message}")
@@ -96,6 +97,22 @@ class AnalyzeRule(
             }
         }
         return result.toString()
+    }
+
+
+    private fun processExpression(ruleStr: String): String {
+        val m = EXP_PATTERN.matcher(ruleStr)
+        if (!m.find()) return ruleStr
+        val sb = StringBuilder()
+        var lastEnd = 0
+        do {
+            sb.append(ruleStr.substring(lastEnd, m.start()))
+            val expr = m.group(1) ?: ""
+            sb.append(getString(expr))
+            lastEnd = m.end()
+        } while (m.find())
+        sb.append(ruleStr.substring(lastEnd))
+        return sb.toString()
     }
 
     fun getStringList(ruleStr: String?): List<String> {
@@ -208,7 +225,7 @@ class AnalyzeRule(
             engine.put("book", ruleData)
             JsBridge.registerGlobalFunctions(engine, jsExtensions)
             // 加载 jsLib（书源中定义的公共函数）
-            source?.jsLib?.let { engine.evalJsLib(it) }
+            source?.jsLib?.let { engine.evalJsLib(it, source, jsExtensions) }
             val jsResult = engine.evaluate(script)
             // 如果 JS 返回 null/undefined，检查 lastResponse
             if (jsResult == null) {

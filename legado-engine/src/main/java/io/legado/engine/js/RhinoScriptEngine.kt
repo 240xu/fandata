@@ -1,10 +1,12 @@
-﻿package io.legado.engine.js
+package io.legado.engine.js
 
 import android.util.Log
+import java.util.LinkedHashMap
 import org.mozilla.javascript.ClassShutter
 import org.mozilla.javascript.Context
 import org.mozilla.javascript.ContextFactory
-import org.mozilla.javascript.ImporterTopLevel
+import org.mozilla.javascript.Scriptable
+import org.mozilla.javascript.TopLevel
 import org.mozilla.javascript.ScriptableObject
 import org.mozilla.javascript.Undefined
 import org.mozilla.javascript.Wrapper
@@ -48,7 +50,8 @@ class RhinoScriptEngine {
         }
     }
 
-    private val scope: ImporterTopLevel
+    private val scope: TopLevel
+    private var _injectedJava: Any? = null
 
     private var jsLibLoaded = false
 
@@ -58,7 +61,13 @@ class RhinoScriptEngine {
         try {
             cx.optimizationLevel = -1
             cx.languageVersion = Context.VERSION_ES6
-            scope = ImporterTopLevel(cx)
+            scope = object : TopLevel() {
+                override fun get(name: String?, start: Scriptable?): Any? {
+                    if (name == "java" && _injectedJava != null) return _injectedJava
+                    return super.get(name, start)
+                }
+            }
+            cx.initStandardObjects(scope, false)
             try {
                 cx.evaluateString(scope, """
                     if (typeof JSON === 'undefined') {
@@ -92,22 +101,55 @@ class RhinoScriptEngine {
      * 加载 jsLib 代码（书源中定义的公共函数）
      * 只执行一次，后续调用跳过
      */
-    fun evalJsLib(jsLib: String?) {
+    /**
+     * Load jsLib code and inject source/java/cache on scope for this.xxx access.
+     * Also extract hosts array and set cachedBaseUrl.
+     */
+    fun evalJsLib(jsLib: String?, source: Any? = null, javaObj: Any? = null) {
         if (jsLib.isNullOrBlank() || jsLibLoaded) return
         try {
             val cx = Context.enter()
             try {
                 cx.optimizationLevel = -1
                 cx.languageVersion = Context.VERSION_ES6
+
+                // Inject source/java/cache on scope so jsLib this.source/this.java work
+                if (source != null) {
+                    ScriptableObject.putProperty(scope, "source", Context.javaToJS(source, scope))
+                }
+                if (javaObj != null) {
+                    ScriptableObject.putProperty(scope, "java", Context.javaToJS(javaObj, scope))
+                }
+                // cache object for jsLib cache.delete/put/get
+                ScriptableObject.putProperty(scope, "cache", Context.javaToJS(LinkedHashMap<String, Any?>(), scope))
+
                 cx.evaluateString(scope, jsLib, "jsLib", 1, null)
                 jsLibLoaded = true
-                Log.i(TAG, "jsLib 加载成功 (${jsLib.length} chars)")
+                Log.i(TAG, "jsLib loaded (" + jsLib.length + " chars)")
+
+                // Extract hosts from jsLib and set cachedBaseUrl on HttpHelper
+                try {
+                    val hostsMatch = Regex("let\\s+hosts\\s*=\\s*\\[([^\\]]*)\\]").find(jsLib)
+                    if (hostsMatch != null) {
+                        val hostsStr = hostsMatch.groupValues[1]
+                        val hosts = hostsStr.split(",").map { it.trim().removeSurrounding("\"").removeSurrounding("\'") }.filter { it.startsWith("http") }
+                        if (hosts.isNotEmpty()) {
+                            Log.i(TAG, "Extracted " + hosts.size + " hosts, first=" + hosts[0])
+                            io.legado.engine.analyze.AnalyzeUrl.httpHelper.cachedBaseUrl = hosts[0]
+                            if (source is io.legado.engine.entity.BookSource) {
+                                source.initDefaultVariable(hosts)
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Hosts extraction failed: " + e.message)
+                }
             } finally {
                 Context.exit()
             }
         } catch (e: Exception) {
-            Log.e(TAG, "jsLib 加载失败: ${e.message}")
-            jsLibLoaded = true // 标记为已加载，避免重复尝试
+            Log.e(TAG, "jsLib load failed: " + e.message)
+            jsLibLoaded = true
         }
     }
 
@@ -142,8 +184,12 @@ class RhinoScriptEngine {
     fun put(key: String, value: Any?) {
         val cx = Context.enter()
         try {
+            if (value is String && key == "key") {
+                Log.d(TAG, "put key: value=" + value + ", bytes=" + value.toByteArray(Charsets.UTF_8).joinToString("") { "%02x".format(it) })
+            }
             val jsValue = Context.javaToJS(value, scope)
             ScriptableObject.putProperty(scope, key, jsValue)
+            if (key == "java") _injectedJava = jsValue
         } finally {
             Context.exit()
         }
@@ -176,3 +222,8 @@ class RhinoScriptEngine {
         }
     }
 }
+
+
+
+
+
