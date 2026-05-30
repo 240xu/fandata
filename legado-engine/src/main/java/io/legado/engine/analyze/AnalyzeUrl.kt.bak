@@ -280,15 +280,10 @@ class AnalyzeUrl(
             engine.put("result", "")
             engine.put("baseUrl", baseUrl)
             engine.put("src", source)
-            engine.put("source", source)
             engine.put("key", key ?: "")
             engine.put("page", page ?: 1)
-            engine.put("book", ruleData)
-            engine.put("chapter", chapter)
             // 注册全局函数（getVariable, setVariable, BaseUrl 等）
             JsBridge.registerGlobalFunctions(engine, jsExtensions)
-            // 加载 jsLib（书源中定义的公共函数，如 getServerHost() 等）
-            source?.jsLib?.let { engine.evalJsLib(it) }
             // 执行
             val result = engine.evaluate(script)
             Log.d(TAG, "evalJS result: ${result?.toString()?.take(200)}")
@@ -301,4 +296,5 @@ class AnalyzeUrl(
 
     private fun getJsEngine(): RhinoScriptEngine = jsEngine ?: RhinoScriptEngine().also { jsEngine = it }
 }
+
 

@@ -1,8 +1,7 @@
-Ôªøpackage com.fandata.plugin.ui
+package com.fandata.plugin.ui
 
 import android.annotation.SuppressLint
 import android.app.Activity
-import android.content.Intent
 import android.net.http.SslError
 import android.os.Bundle
 import android.view.View
@@ -13,8 +12,19 @@ import com.fandata.plugin.login.CookieStore
 import com.fandata.plugin.login.LoginHelper
 import com.fandata.plugin.login.LoginJsExtensions
 import com.fandata.plugin.login.RowUi
+import java.util.concurrent.CountDownLatch
 
-class LoginActivity : Activity(), LoginHelper.LoginCallback {
+/**
+ * µ«¬º Activity - ÷ß≥÷ WebView ƒ£ Ω∫Õ◊‘∂®“Â UI ƒ£ Ω
+ * 
+ * ◊‘∂®“Â UI ƒ£ Ωœ¬£¨∞¥≈•µƒ action ◊÷∂Œæˆ∂®µ˜”√ƒƒ∏ˆ JS ∫Ø ˝£∫
+ * - action = "fq_login()" -> µ˜”√ fq_login()
+ * - action = "SortFilter()" -> µ˜”√ SortFilter()£®ƒ⁄≤øµ˜”√ startBrowserAwait£©
+ * - action = null -> µ˜”√ƒ¨»œ login()
+ * 
+ *  µœ÷ BrowserOpener Ω”ø⁄£¨Œ™ LoginJsExtensions Ã·π© WebView ‰Ø¿¿∆˜π¶ƒ‹
+ */
+class LoginActivity : Activity(), LoginHelper.LoginCallback, LoginJsExtensions.BrowserOpener {
 
     private var webView: WebView? = null
     private var scrollView: ScrollView? = null
@@ -27,13 +37,25 @@ class LoginActivity : Activity(), LoginHelper.LoginCallback {
         super.onCreate(savedInstanceState)
         CookieStore.init(this)
 
+        // »Áπ˚ BookSourceManager Œ™ø’£®øÁΩ¯≥Ã£©£¨¥”π≤œÌ¥Ê¥¢º”‘ÿ
+        if (BookSourceManager.getAll().isEmpty()) {
+            try {
+                val json = com.fandata.plugin.SharedSourceStorage.loadSources(this)
+                if (json != null) {
+                    BookSourceManager.importFromJson(json)
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("LoginActivity", "¥”π≤œÌ¥Ê¥¢º”‘ÿ È‘¥ ß∞‹: ${e.message}")
+            }
+        }
+
         val sourceUrl = intent.getStringExtra("sourceUrl") ?: ""
         currentSource = BookSourceManager.getAll().find { it.bookSourceUrl == sourceUrl }
             ?: BookSourceManager.getCurrent()
 
         val source = currentSource
         if (source == null) {
-            Toast.makeText(this, "Êú™ÊâæÂà∞‰π¶Ê∫ê", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Œ¥’“µΩ È‘¥", Toast.LENGTH_SHORT).show()
             finish()
             return
         }
@@ -53,12 +75,12 @@ class LoginActivity : Activity(), LoginHelper.LoginCallback {
             setPadding(16, 16, 16, 16)
         }
         val titleText = TextView(this).apply {
-            text = "ÁôªÂΩï - "
+            text = "µ«¬º - ${source.bookSourceName}"
             textSize = 18f
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
         val doneBtn = Button(this).apply {
-            text = "ÂÆåÊàê"
+            text = "ÕÍ≥…"
             setOnClickListener { checkAndSaveCookies(source) }
         }
         toolbar.addView(titleText)
@@ -105,144 +127,176 @@ class LoginActivity : Activity(), LoginHelper.LoginCallback {
             val headers = source.getHeaderMap()
             wv.loadUrl(loginUrl, headers)
         } else {
-            Toast.makeText(this, "ÁôªÂΩï URL ‰∏∫Á©∫", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "µ«¬º URL Œ™ø’", Toast.LENGTH_SHORT).show()
             finish()
         }
     }
 
+    @SuppressLint("SetJavaScriptEnabled")
     private fun setupCustomUiLogin(source: io.legado.engine.entity.BookSource) {
         val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
+        // π§æﬂ¿∏
         val toolbar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(16, 16, 16, 16)
         }
         val titleText = TextView(this).apply {
-            text = "ÁôªÂΩï - "
+            text = "µ«¬º - ${source.bookSourceName}"
             textSize = 18f
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
-        val submitBtn = Button(this).apply {
-            text = "Êèê‰∫§"
-            setOnClickListener {
-                LoginHelper.executeLogin(source, formData.toMap(), this@LoginActivity)
-            }
+        val doneBtn = Button(this).apply {
+            text = "ÕÍ≥…"
+            setOnClickListener { checkAndSaveCookies(source) }
         }
         toolbar.addView(titleText)
-        toolbar.addView(submitBtn)
+        toolbar.addView(doneBtn)
         layout.addView(toolbar)
 
-        val sv = ScrollView(this).apply {
+        scrollView = ScrollView(this).apply {
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
         }
-        val fc = LinearLayout(this).apply {
+        formContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(24, 16, 24, 16)
         }
-        sv.addView(fc)
-        scrollView = sv
-        formContainer = fc
-        layout.addView(sv)
+        scrollView!!.addView(formContainer)
+        layout.addView(scrollView)
         setContentView(layout)
 
         val rows = LoginHelper.getLoginUiRows(source)
         buildFormUi(rows, source)
     }
 
+    /**
+     * ∏˘æ› loginUi ∂®“ÂππΩ®±Ìµ•
+     */
     private fun buildFormUi(rows: List<RowUi>, source: io.legado.engine.entity.BookSource) {
         formContainer?.removeAllViews()
-        formData.clear()
+
         for (row in rows) {
             when (row.type) {
-                RowUi.Type.text -> {
-                    val label = TextView(this).apply { text = row.name; textSize = 14f }
-                    val editText = EditText(this).apply {
-                        hint = row.name
-                        setText(row.default ?: "")
-                        tag = row.name
-                    }
-                    formData[row.name] = row.default ?: ""
-                    editText.setOnTextChangedListener { s -> formData[row.name] = s?.toString() ?: "" }
-                    formContainer?.addView(label)
-                    formContainer?.addView(editText, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { setMargins(0, 0, 0, 16) })
-                }
-                RowUi.Type.password -> {
-                    val label = TextView(this).apply { text = row.name; textSize = 14f }
-                    val editText = EditText(this).apply {
-                        hint = row.name
-                        inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
-                        setText(row.default ?: "")
-                        tag = row.name
-                    }
-                    formData[row.name] = row.default ?: ""
-                    editText.setOnTextChangedListener { s -> formData[row.name] = s?.toString() ?: "" }
-                    formContainer?.addView(label)
-                    formContainer?.addView(editText, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { setMargins(0, 0, 0, 16) })
-                }
-                RowUi.Type.button -> {
-                    val btn = Button(this).apply {
+                RowUi.Type.text, RowUi.Type.password -> {
+                    val label = TextView(this).apply {
                         text = row.name
+                        textSize = 14f
+                        setPadding(0, 8, 0, 4)
+                    }
+                    formContainer?.addView(label)
+
+                    val editText = EditText(this).apply {
+                        tag = row.name
+                        hint = row.default ?: ""
+                        if (row.type == RowUi.Type.password) {
+                            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+                        }
+                        layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                            setMargins(0, 0, 0, 16)
+                        }
+                    }
+                    editText.setOnTextChangedListener { text ->
+                        formData[row.name] = text?.toString() ?: ""
+                    }
+                    formData[row.name]?.let { editText.setText(it) }
+                    formContainer?.addView(editText)
+                }
+
+                RowUi.Type.button -> {
+                    val button = Button(this).apply {
+                        text = row.name
+                        layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                            setMargins(0, 8, 0, 8)
+                        }
                         setOnClickListener {
-                            row.action?.let { action ->
-                                try {
-                                    LoginHelper.executeLogin(source, formData.toMap(), this@LoginActivity)
-                                } catch (_: Exception) {}
+                            val action = row.action
+                            if (action != null && action.isNotBlank()) {
+                                // ”– action£∫÷¥––÷∏∂®µƒ JS ∫Ø ˝
+                                LoginHelper.executeAction(source, formData.toMap(), action, this@LoginActivity, this@LoginActivity)
+                            } else {
+                                // Œﬁ action£∫÷¥––ƒ¨»œ login()
+                                LoginHelper.executeLogin(source, formData.toMap(), this@LoginActivity)
                             }
                         }
                     }
-                    row.action?.let { action ->
-                        btn.setOnLongClickListener {
-                            try { LoginHelper.executeLogin(source, formData.toMap(), this@LoginActivity) } catch (_: Exception) {}
-                            true
+                    formContainer?.addView(button)
+                }
+
+                RowUi.Type.toggle -> {
+                    val switchRow = LinearLayout(this).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        gravity = android.view.Gravity.CENTER_VERTICAL
+                        layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                            setMargins(0, 8, 0, 8)
                         }
                     }
-                    formContainer?.addView(btn, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { setMargins(0, 16, 0, 16) })
-                }
-                RowUi.Type.toggle -> {
-                    val toggle = Switch(this).apply {
+                    val label = TextView(this).apply {
                         text = row.name
-                        isChecked = row.default?.toBoolean() ?: false
-                        tag = row.name
+                        textSize = 14f
+                        layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
                     }
-                    formData[row.name] = (row.default?.toBoolean() ?: false).toString()
-                    toggle.setOnCheckedChangeListener { _, checked -> formData[row.name] = checked.toString() }
-                    formContainer?.addView(toggle, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { setMargins(0, 8, 0, 8) })
+                    val switch = Switch(this).apply {
+                        tag = row.name
+                        isChecked = formData[row.name]?.toBoolean() ?: (row.default?.toBoolean() ?: false)
+                        setOnCheckedChangeListener { _, isChecked ->
+                            formData[row.name] = isChecked.toString()
+                        }
+                    }
+                    switchRow.addView(label)
+                    switchRow.addView(switch)
+                    formContainer?.addView(switchRow)
                 }
+
                 RowUi.Type.select -> {
-                    val label = TextView(this).apply { text = row.name; textSize = 14f }
-                    val spinner = Spinner(this)
-                    val options = row.chars?.filterNotNull()?.toTypedArray() ?: arrayOf()
-                    spinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, options)
-                    formData[row.name] = options.firstOrNull() ?: ""
+                    val label = TextView(this).apply {
+                        text = row.name
+                        textSize = 14f
+                        setPadding(0, 8, 0, 4)
+                    }
+                    formContainer?.addView(label)
+
+                    val spinner = Spinner(this).apply {
+                        tag = row.name
+                        layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                            setMargins(0, 0, 0, 16)
+                        }
+                    }
+                    row.chars?.let { options ->
+                        val adapter = ArrayAdapter(this@LoginActivity, android.R.layout.simple_spinner_item, options.filterNotNull())
+                        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+                        spinner.adapter = adapter
+                        formData[row.name]?.let { current ->
+                            val idx = options.indexOf(current)
+                            if (idx >= 0) spinner.setSelection(idx)
+                        }
+                    }
                     spinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
                         override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
-                            formData[row.name] = options.getOrElse(position) { "" }
+                            formData[row.name] = parent?.getItemAtPosition(position)?.toString() ?: ""
                         }
                         override fun onNothingSelected(parent: AdapterView<*>?) {}
                     }
-                    formContainer?.addView(label)
-                    formContainer?.addView(spinner, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { setMargins(0, 0, 0, 24) })
+                    formContainer?.addView(spinner)
                 }
             }
         }
     }
 
     private fun checkAndSaveCookies(source: io.legado.engine.entity.BookSource) {
-        val url = LoginHelper.getWebViewLoginUrl(source) ?: source.bookSourceUrl
+        val url = source.bookSourceUrl
         val cookie = CookieManager.getInstance().getCookie(url)
         if (cookie != null && cookie.isNotBlank()) {
             CookieStore.setCookieByUrl(url, cookie)
-            Toast.makeText(this, "Cookie Â∑≤‰øùÂ≠ò", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Cookie “—±£¥Ê", Toast.LENGTH_SHORT).show()
         } else {
-            Toast.makeText(this, "Êú™Ê£ÄÊµãÂà∞ÁôªÂΩïÁä∂ÊÄÅ", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Œ¥ºÏ≤‚µΩµ«¬º◊¥Ã¨", Toast.LENGTH_SHORT).show()
         }
         finish()
     }
 
     override fun onSuccess() {
         runOnUiThread {
-            Toast.makeText(this, "ÁôªÂΩïÊàêÂäü", Toast.LENGTH_SHORT).show()
-            finish()
+            Toast.makeText(this, "≤Ÿ◊˜≥…π¶", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -268,6 +322,76 @@ class LoginActivity : Activity(), LoginHelper.LoginCallback {
         }
     }
 
+    /**
+     * BrowserOpener  µœ÷ - ¥Úø™ WebView ∂‘ª∞øÚ
+     * π© LoginJsExtensions.startBrowserAwait() µ˜”√
+     * 
+     *  π”√ CountDownLatch »∑±£‘⁄ UI œﬂ≥Ã…œ¥Úø™≤¢µ»¥˝”√ªß≤Ÿ◊˜ÕÍ≥…
+     */
+    @SuppressLint("SetJavaScriptEnabled")
+    override fun openBrowserForResult(url: String, title: String, callback: (String) -> Unit) {
+        runOnUiThread {
+            val dialog = android.app.AlertDialog.Builder(this)
+                .setTitle(title.ifBlank { "‰Ø¿¿∆˜" })
+                .create()
+
+            val wv = WebView(this).apply {
+                settings.javaScriptEnabled = true
+                settings.domStorageEnabled = true
+                settings.useWideViewPort = true
+                settings.loadWithOverviewMode = true
+                settings.userAgentString = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+                webViewClient = object : WebViewClient() {
+                    override fun onReceivedSslError(view: WebView?, handler: SslErrorHandler?, error: SslError?) {
+                        handler?.proceed()
+                    }
+                    override fun onPageFinished(view: WebView?, pageUrl: String?) {
+                        // ◊¢»Î Cookie µΩ CookieStore
+                        pageUrl?.let {
+                            val cookie = CookieManager.getInstance().getCookie(it)
+                            if (cookie != null) CookieStore.setCookieByUrl(it, cookie)
+                        }
+                    }
+                }
+            }
+
+            // ¥¶¿Ì data: URL ∫Õ∆’Õ® URL
+            wv.loadUrl(url)
+
+            dialog.setView(wv)
+            dialog.setButton(android.app.AlertDialog.BUTTON_POSITIVE, "ÕÍ≥…") { _, _ ->
+                // ªÒ»° WebView ÷–µƒ HTML ƒ⁄»›
+                wv.evaluateJavascript(
+                    "(function() { try { return document.documentElement.outerHTML; } catch(e) { return '<error>' + e.message; } })()"
+                ) { html ->
+                    val cleanHtml = html
+                        ?.removeSurrounding("\"")
+                        ?.replace("\\u003C", "<")
+                        ?.replace("\\u003E", ">")
+                        ?.replace("\\u0026", "&")
+                        ?.replace("\\\"", "\"")
+                        ?.replace("\\n", "\n")
+                        ?.replace("\\t", "\t")
+                        ?: ""
+                    callback(cleanHtml)
+                }
+            }
+            dialog.setButton(android.app.AlertDialog.BUTTON_NEGATIVE, "»°œ˚") { _, _ ->
+                callback("")
+            }
+            dialog.setOnCancelListener {
+                callback("")
+            }
+            dialog.show()
+
+            // …Ë÷√∂‘ª∞øÚ¥Û–°
+            dialog.window?.setLayout(
+                (resources.displayMetrics.widthPixels * 0.95).toInt(),
+                (resources.displayMetrics.heightPixels * 0.85).toInt()
+            )
+        }
+    }
+
     private inline fun <reified T : View> findViewByTag(tag: String): T? {
         return formContainer?.findViewWithTag<T>(tag)
     }
@@ -285,4 +409,3 @@ private fun EditText.setOnTextChangedListener(listener: (CharSequence?) -> Unit)
         override fun afterTextChanged(s: android.text.Editable?) {}
     })
 }
-

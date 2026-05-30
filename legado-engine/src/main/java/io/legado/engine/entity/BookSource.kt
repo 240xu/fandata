@@ -1,4 +1,4 @@
-ï»¿package io.legado.engine.entity
+package io.legado.engine.entity
 
 import com.google.gson.Gson
 import io.legado.engine.entity.rule.*
@@ -66,7 +66,7 @@ data class BookSource(
         return map
     }
 
-    // ç”¨æˆ·ä¿¡æ¯ç¼“å­˜ï¼ˆå†…å­˜çº§åˆ«ï¼Œç”± ConfigProvider æŒä¹…åŒ–ï¼‰
+    // ÓÃ»§ĞÅÏ¢»º´æ£¨ÄÚ´æ¼¶±ğ£¬ÓÉ ConfigProvider ³Ö¾Ã»¯£©
     private val loginInfoCache = mutableMapOf<String, String>()
     private val variableCache = mutableMapOf<String, String>()
 
@@ -90,5 +90,5 @@ data class BookSource(
         loginInfoCache["loginHeader"] = header
     }
     fun getLoginHeader(): String? = loginInfoCache["loginHeader"]
-}
 
+}

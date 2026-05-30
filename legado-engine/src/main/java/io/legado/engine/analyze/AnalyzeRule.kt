@@ -204,9 +204,11 @@ class AnalyzeRule(
             engine.put("result", result)
             engine.put("baseUrl", baseUrl ?: "")
             engine.put("src", source)
+            engine.put("source", source)
             engine.put("book", ruleData)
-            // key/page 不在此处设置，避免与 JS 解构变量冲突
             JsBridge.registerGlobalFunctions(engine, jsExtensions)
+            // 加载 jsLib（书源中定义的公共函数）
+            source?.jsLib?.let { engine.evalJsLib(it) }
             val jsResult = engine.evaluate(script)
             // 如果 JS 返回 null/undefined，检查 lastResponse
             if (jsResult == null) {

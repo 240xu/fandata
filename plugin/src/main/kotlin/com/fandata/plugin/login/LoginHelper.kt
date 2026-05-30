@@ -1,24 +1,26 @@
 package com.fandata.plugin.login
 
-import android.content.Context
 import android.util.Log
 import io.legado.engine.entity.BookSource
-import io.legado.engine.js.JsExtensions
 import io.legado.engine.js.RhinoScriptEngine
 
 /**
- * ç™»å½•é€»è¾‘æ ¸å¿ƒ - ç§»æ¤è‡ª Legado SourceLoginViewModel + SourceLoginJsExtensions
+ * µÇÂ¼Âß¼­ºËĞÄ - ÒÆÖ²×Ô Legado SourceLoginViewModel + SourceLoginJsExtensions
  * 
- * æ”¯æŒä¸¤ç§ç™»å½•æ¨¡å¼ï¼š
- * 1. WebView æ¨¡å¼ï¼šloginUi ä¸ºç©ºï¼Œç›´æ¥åŠ è½½ loginUrl åˆ° WebView
- * 2. è‡ªå®šä¹‰ UI æ¨¡å¼ï¼šloginUi å®šä¹‰è¡¨å•ï¼ŒloginUrl æ˜¯ç™»å½• JS
+ * Ö§³ÖÁ½ÖÖµÇÂ¼Ä£Ê½£º
+ * 1. WebView Ä£Ê½£ºloginUi Îª¿Õ£¬Ö±½Ó¼ÓÔØ loginUrl µ½ WebView
+ * 2. ×Ô¶¨Òå UI Ä£Ê½£ºloginUi ¶¨Òå±íµ¥£¬loginUrl ÊÇµÇÂ¼ JS
+ * 
+ * °´Å¥ action ´¦Àí£º
+ * - ÓĞ action£ºÖ´ĞĞ loginUrl JS ¶¨ÒåËùÓĞº¯Êı£¬È»ºóµ÷ÓÃ action Ö¸¶¨µÄº¯Êı
+ * - ÎŞ action£ºÖ´ĞĞ loginUrl JS£¬µ÷ÓÃÄ¬ÈÏ login() º¯Êı
  */
 object LoginHelper {
     private const val TAG = "LoginHelper"
     private var jsEngine: RhinoScriptEngine? = null
 
     /**
-     * åˆ¤æ–­ç™»å½•æ¨¡å¼
+     * ÅĞ¶ÏµÇÂ¼Ä£Ê½
      */
     fun getLoginMode(source: BookSource): LoginMode {
         val loginUi = source.loginUi
@@ -27,16 +29,15 @@ object LoginHelper {
     }
 
     /**
-     * è·å– WebView ç™»å½• URL
+     * »ñÈ¡ WebView µÇÂ¼ URL
      */
     fun getWebViewLoginUrl(source: BookSource): String? {
         val loginUrl = source.loginUrl ?: return null
         return when {
             loginUrl.startsWith("http") -> loginUrl
-            loginUrl.startsWith("@js:") -> null // JS æ¨¡å¼ï¼Œä¸æ˜¯ URL
+            loginUrl.startsWith("@js:") -> null
             loginUrl.startsWith("<js>") -> null
             else -> {
-                // å°è¯•ä½œä¸ºç›¸å¯¹ URL
                 if (source.bookSourceUrl.startsWith("http")) {
                     "${source.bookSourceUrl.trimEnd('/')}/$loginUrl"
                 } else null
@@ -45,7 +46,7 @@ object LoginHelper {
     }
 
     /**
-     * è·å–è‡ªå®šä¹‰ UI è¡¨å•å®šä¹‰
+     * »ñÈ¡×Ô¶¨Òå UI ±íµ¥¶¨Òå
      */
     fun getLoginUiRows(source: BookSource): List<RowUi> {
         val loginUi = source.loginUi ?: return emptyList()
@@ -65,34 +66,99 @@ object LoginHelper {
     }
 
     /**
-     * æ‰§è¡Œç™»å½• JSï¼ˆè‡ªå®šä¹‰ UI æ¨¡å¼çš„ç™»å½•æŒ‰é’®ç‚¹å‡»ï¼‰
+     * Ö´ĞĞµÇÂ¼ JS£¨×Ô¶¨Òå UI Ä£Ê½µÄÄ¬ÈÏ°´Å¥µã»÷£©
+     * ÎŞ action Ê±µ÷ÓÃ login() º¯Êı
      */
     fun executeLogin(source: BookSource, loginData: Map<String, String>, callback: LoginCallback) {
-        val loginJs = source.loginUrl ?: return
+        executeAction(source, loginData, null, callback)
+    }
+
+    /**
+     * Ö´ĞĞÖ¸¶¨ action µÄ JS º¯Êı£¨´ø BrowserOpener Ö§³Ö£©
+     * 
+     * Á÷³Ì£º
+     * 1. ÌáÈ¡ loginUrl ÖĞµÄ JS ´úÂë
+     * 2. ÔÚ Rhino ÒıÇæÖĞÖ´ĞĞ¸Ã JS£¨¶¨ÒåËùÓĞº¯Êı£©
+     * 3. Èç¹ûÖ¸¶¨ÁË action£¬µ÷ÓÃ action ÖĞµÄº¯ÊıÃû£»·ñÔòµ÷ÓÃ login()
+     * 
+     * Ö§³ÖµÄ action ¸ñÊ½£º
+     * - "fq_login()" -> µ÷ÓÃ fq_login º¯Êı
+     * - "logout()" -> µ÷ÓÃ logout º¯Êı
+     * - "boy()" -> µ÷ÓÃ boy º¯Êı
+     * - "SortFilter()" -> µ÷ÓÃ SortFilter º¯Êı£¨ÄÚ²¿µ÷ÓÃ startBrowserAwait£©
+     * - "java.setVariable('key', 'value')" -> Ö´ĞĞ JS ±í´ïÊ½
+     */
+    fun executeAction(
+        source: BookSource, 
+        loginData: Map<String, String>, 
+        action: String?, 
+        callback: LoginCallback,
+        browserOpener: LoginJsExtensions.BrowserOpener? = null
+    ) {
+        val loginJs = source.loginUrl ?: run {
+            callback.onError("ÊéÔ´Î´¶¨ÒåµÇÂ¼½Å±¾ (loginUrl)")
+            return
+        }
         try {
             val engine = getJsEngine()
             val jsExtensions = LoginJsExtensions(callback)
+            jsExtensions.source = source
+            jsExtensions.browserOpener = browserOpener
             engine.put("java", jsExtensions)
+            engine.put("cookie", jsExtensions)
+            engine.put("source", source)
+            engine.put("src", source)
             engine.put("result", loginData)
             engine.put("book", null)
             engine.put("chapter", null)
             engine.put("isLongClick", false)
 
-            // æ‰§è¡Œç™»å½• JS
-            val fullJs = """
-                $loginJs
-                if (typeof login == 'function') { login.apply(this); } else { throw('login function not found'); }
-            """.trimIndent()
-            engine.evaluate(fullJs)
+            // ÌáÈ¡²¢Ö´ĞĞ loginUrl ÖĞµÄ JS ´úÂë£¨¶¨ÒåËùÓĞº¯Êı£©
+            val extractedJs = source.getLoginJs() ?: loginJs
+            Log.d(TAG, "Ö´ĞĞ loginUrl JS (${extractedJs.length} chars)")
+            engine.evaluate(extractedJs)
+
+            // ¼ÓÔØ jsLib£¨ÊéÔ´¹«¹²º¯Êı£¬Èç getServerHost() µÈ£©
+            source.jsLib?.let { lib ->
+                if (lib.isNotBlank()) {
+                    try {
+                        engine.evalJsLib(lib)
+                        Log.d(TAG, "jsLib ¼ÓÔØ³É¹¦")
+                    } catch (e: Exception) {
+                        Log.w(TAG, "jsLib ¼ÓÔØÊ§°Ü: ${e.message}")
+                    }
+                }
+            }
+
+            // ¸ù¾İ action µ÷ÓÃ¶ÔÓ¦º¯Êı
+            val callTarget = action?.trim()
+            if (!callTarget.isNullOrEmpty()) {
+                Log.i(TAG, "µ÷ÓÃ action: $callTarget")
+                // action ¿ÉÄÜÊÇ "funcName()" »ò "java.xxx()" µÈ±í´ïÊ½
+                if (callTarget.matches(Regex("^\\w+\\(\\)$"))) {
+                    // ¼òµ¥º¯Êıµ÷ÓÃ: fq_login() -> fq_login()
+                    engine.evaluate(callTarget)
+                } else if (callTarget.contains("(")) {
+                    // ¸´ÔÓ±í´ïÊ½: java.xxx() µÈ
+                    engine.evaluate(callTarget)
+                } else {
+                    // ´¿º¯ÊıÃû: fq_login -> fq_login()
+                    engine.evaluate("${callTarget}()")
+                }
+            } else {
+                // ÎŞ action£¬µ÷ÓÃÄ¬ÈÏ login()
+                Log.d(TAG, "µ÷ÓÃÄ¬ÈÏ login() º¯Êı")
+                engine.evaluate("if (typeof login === 'function') login(); else if (typeof fq_login === 'function') fq_login();")
+            }
             callback.onSuccess()
         } catch (e: Exception) {
-            Log.e(TAG, "ç™»å½•æ‰§è¡Œå¤±è´¥: ${e.message}")
-            callback.onError("ç™»å½•å¤±è´¥: ${e.message}")
+            Log.e(TAG, "µÇÂ¼Ö´ĞĞÊ§°Ü: ${e.message}", e)
+            callback.onError("µÇÂ¼Ê§°Ü: ${e.message}")
         }
     }
 
     /**
-     * æ‰§è¡Œ loginCheckJs æ£€æŸ¥ç™»å½•çŠ¶æ€
+     * Ö´ĞĞ loginCheckJs ¼ì²éµÇÂ¼×´Ì¬
      */
     fun checkLogin(source: BookSource): Boolean {
         val checkJs = source.loginCheckJs ?: return false
@@ -107,7 +173,9 @@ object LoginHelper {
         return try {
             val engine = getJsEngine()
             engine.put("java", LoginJsExtensions(null))
+            engine.put("cookie", LoginJsExtensions(null))
             engine.put("src", source)
+            engine.put("source", source)
             engine.evaluate(js)?.toString()
         } catch (_: Exception) { null }
     }

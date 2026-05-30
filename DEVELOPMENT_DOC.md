@@ -658,3 +658,143 @@ fandata/
 5. 在 JitPack 触发构建获取依赖坐标
 
 完成后可将 `implementation(project(":legado-engine"))` 替换为 `implementation("com.github.<user>:fandata-engine:<version>")`。
+
+---
+
+## 十一、当前状态与已知限制（2026-05-30 更新）
+
+### 已完成功能
+- ✅ Legado 解析引擎完整移植（RuleAnalyzer, AnalyzeByJSoup/XPath/JSONPath/Regex）
+- ✅ Rhino JS 引擎 + RhinoClassShutter 安全沙箱
+- ✅ JsBridge 全局函数注册（20+ 函数）
+- ✅ ContentHelp 段落重排
+- ✅ Coroutine/CompositeCoroutine 协程链
+- ✅ BaseSource/BookSource 实体完整移植
+- ✅ ConfigProvider/LoginProvider/CacheProvider 接口
+- ✅ EngineContext 全局 Provider 注入
+- ✅ HttpHelper + externalCookieStore Cookie 同步
+- ✅ WebBook 编排器（search/explore/bookInfo/chapterList/content）
+- ✅ LNR 插件入口（@Plugin, apiVersion=3）
+- ✅ WebDataSource 数据源（@WebDataSource）
+- ✅ ExploreAdapter 探索页适配器（JS/XPath/CSS + 搜索回退）
+- ✅ LoginActivity 登录页（WebView + 自定义 UI 表单：text/password/button/toggle/select）
+- ✅ PluginSettingsPage 设置页（Compose Switch 控件）
+- ✅ PluginConfigProvider 配置持久化
+- ✅ CookieStore 双向同步
+- ✅ BookSourceManager 书源管理
+- ✅ custom.js 段评注入脚本
+- ✅ BUILD SUCCESSFUL → plugin-debug.apk.lnrp
+- ✅ GitHub 仓库：https://github.com/240xu/fandata
+- ✅ Release v1.0.0 含 .lnrp 下载
+
+### 已知限制
+
+#### 1. 聚合源不完全支持
+**问题**：内置的"光遇聚合"书源使用 `data:;base64,...,{"type":"gysearch"}` 机制来路由搜索请求到多个子源。这是 Legado 特有的聚合框架功能。
+
+**原因**：我们的引擎是单源架构，没有实现 Legado 的聚合调度器（AggregationDispatcher）。聚合源的 data URL 是路由指令，不是实际数据。
+
+**影响**：
+- 聚合源的搜索、探索页无法正常工作
+- 聚合源的正文获取（`gycontent` 类型）也无法工作
+
+**解决方案**：
+- 使用非聚合源（直接 HTTP URL 的书源）可以正常工作
+- 未来可以实现一个轻量级聚合调度器来支持 `gysearch`/`gycontent` 类型
+
+#### 2. 模拟器网络限制
+**问题**：Android 模拟器无法访问外部网站（100% packet loss）。
+
+**影响**：无法在模拟器上测试搜索、探索、正文等网络功能。
+
+**解决方案**：在真实设备上测试，或配置模拟器网络代理。
+
+#### 3. AppsFilter BLOCKED 警告
+**问题**：日志中出现 `AppsFilter: interaction: PackageSetting{...com.fandata.plugin...} -> PackageSetting{...lightnovelreader.debug...} BLOCKED`。
+
+**原因**：Android 11+ 的包可见性限制。插件 APK 和宿主 APK 之间的包查询被过滤。
+
+**影响**：仅为警告，不影响插件功能。插件通过 KSP 注解处理器自动注册，不依赖包查询。
+
+#### 4. LNR API 版本兼容性
+**当前状态**：使用 `lightnovelreader = "0.4-SNAPSHOT"`，apiVersion = 3。
+
+**注意**：LNR API 仍在快速迭代中，未来版本可能有 breaking changes。需要关注 [官方文档](https://api-doc.lnr.nariko.org/) 更新。
+
+### 开发中遇到的关键问题与解决方案
+
+#### 问题 1：Rhino Context.enter() 缺失
+**现象**：`put()`/`get()`/`putFunction()` 调用时崩溃
+**原因**：Rhino 需要在 `Context.enter()` 上下文中执行
+**解决**：在所有 Rhino 操作中包装 `Context.enter()`/`Context.exit()`
+
+#### 问题 2：RhinoClassShutter 阻止引擎内部类
+**现象**：JS 执行时抛出 `SecurityException`
+**原因**：安全沙箱白名单缺少 `io.legado.engine.` 包
+**解决**：在 `RhinoClassShutter` 中添加引擎包到白名单
+
+#### 问题 3：data URL 基础 URL 错误
+**现象**：相对 URL 解析失败
+**原因**：data URL 的响应 URL 是 `https://data.url/`，不是书源 URL
+**解决**：`effectiveBaseUrl()` 检测 data URL 并返回 `bookSourceUrl`
+
+#### 问题 4：链式规则 `<js>request(url)</js>@$.data` 不工作
+**现象**：JS 返回的 JSON 无法被后续 JSONPath 规则解析
+**原因**：JS 执行结果没有传递给下一个规则
+**解决**：在 `JsExtensions` 中添加 `lastResponse` 跟踪，在 `AnalyzeRule.getElements()` 中处理 JS→JSONPath 链
+
+#### 问题 5：`var page` 重复声明
+**现象**：JS 执行时报变量重复声明错误
+**原因**：`AnalyzeRule.evalJS()` 中的 `engine.put("page")` 与 JS 代码中的 `var page` 冲突
+**解决**：移除引擎中的 `put("key"/"page")` 调用
+
+#### 问题 6：hexDecodeToString 对非 hex JSON 失败
+**现象**：JSON 字符串被当作 hex 解码导致乱码
+**原因**：`hexDecodeToString` 没有检查输入是否为有效 hex
+**解决**：添加检查，如果输入看起来像 JSON（以 `{` 或 `[` 开头），直接返回
+
+### 探索页改造经验
+
+Legado 的"发现页"对应 LNR 的"探索页"（ExplorePage），但数据模型完全不同：
+
+| Legado | LNR |
+|--------|-----|
+| `List<SearchBook>` | `List<ExploreBooksRow>` |
+| 单个书籍列表 | 分组行列表，每行包含标题和书籍列表 |
+| `ruleExplore` 直接解析 | 需要 `ExploreAdapter` 转换 |
+
+**改造要点**：
+1. `ExploreAdapter` 作为中间层，将 `WebBook.exploreBook()` 的 `List<SearchBook>` 转为 `ExploreBooksRow`
+2. 每个 `ExploreBooksRow` 包含：标题（书源名称）、书籍列表（最多 20 本）、是否有更多
+3. 书籍 ID 使用 `IdCodec.encodeBookId()` 编码，包含 bookUrl + sourceUrl + type 信息
+4. 探索页需要处理 JS 规则（`<js>...</js>`）和普通 URL 两种情况
+5. 如果探索页失败，回退到搜索"推荐"关键词
+
+### 打包与 API 支持
+
+#### .lnrp 文件格式
+`.lnrp` 实际上就是 `.apk` 文件改了后缀名。LNR 通过插件管理器安装时，会识别 `.lnrp` 后缀并将其作为普通 APK 安装。
+
+**构建配置**：
+```kotlin
+androidComponents { onVariants { variant -> variant.outputs.forEach {
+    val o = it as com.android.build.api.variant.impl.VariantOutputImpl
+    o.outputFileName = o.outputFileName.get().replace(".apk", ".apk.lnrp")
+} } }
+```
+
+#### LNR 插件 API 要点
+- `@Plugin` 注解：声明插件元数据（名称、版本、作者、描述、apiVersion）
+- `@WebDataSource` 注解：声明数据源（name, provider）
+- `LightNovelReaderPlugin` 接口：`onLoad()` 初始化 + `PageContent()` 设置页
+- `WebBookDataSource` 接口：`searchProvider` + `explorePageProvider` + `getBookInformation()` + `getBookVolumes()` + `getChapterContent()`
+- `UserDataRepositoryApi`：持久化存储 API，用于配置保存
+
+#### JitPack 集成
+引擎模块设计为独立库，可通过 JitPack 分发：
+1. 推送到 GitHub
+2. 创建 Release tag
+3. 访问 `https://jitpack.io/#240xu/fandata` 触发构建
+4. 在插件中使用 `implementation("com.github.240xu:fandata:v1.0.0")`
+
+当前实现使用 `implementation(project(":legado-engine"))` 本地依赖，便于开发调试。

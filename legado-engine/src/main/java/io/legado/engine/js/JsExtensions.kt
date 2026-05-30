@@ -39,6 +39,15 @@ class JsExtensions(
      * 书源 JS 中最常用的方法
      */
     fun ajax(url: String): String {
+        // 处理 "url, options" 格式（番茄等书源使用）
+        if (url.contains(", {") || url.contains(",{")) {
+            val commaIdx = url.indexOf(", {").let { if (it < 0) url.indexOf(",{") else it }
+            if (commaIdx > 0) {
+                val realUrlPart = url.substring(0, commaIdx).trim()
+                val optionsPart = url.substring(commaIdx + 1).trim()
+                return ajaxWithOptions(realUrlPart, optionsPart)
+            }
+        }
         return try {
             val realUrl = resolveUrl(url)
             Log.d(TAG, "ajax GET: $realUrl")
@@ -52,8 +61,42 @@ class JsExtensions(
 
     /**
      * ajax(url, options) - 带选项的请求
+     * options 可以是 JSON 字符串，包含 method, headers, body 等
      */
-    fun ajax(url: String, options: String): String = ajax(url)
+    fun ajax(url: String, options: String): String {
+        return ajaxWithOptions(url, options)
+    }
+
+    private fun ajaxWithOptions(url: String, options: String): String {
+        return try {
+            val realUrl = resolveUrl(url)
+            Log.d(TAG, "ajaxWithOptions: $realUrl, options=${options.take(200)}")
+            val opts = try {
+                com.google.gson.Gson().fromJson(options, Map::class.java) as? Map<String, Any?>
+            } catch (_: Exception) { null }
+
+            val method = (opts?.get("method")?.toString() ?: "GET").uppercase()
+            val headers = LinkedHashMap<String, String>()
+            @Suppress("UNCHECKED_CAST")
+            val headerMap = opts?.get("headers") as? Map<String, Any?>
+            headerMap?.forEach { (k, v) -> headers[k] = v.toString() }
+
+            val reqBuilder = Request.Builder().url(realUrl)
+            headers.forEach { (k, v) -> reqBuilder.addHeader(k, v) }
+
+            when (method) {
+                "POST" -> {
+                    val bodyStr = opts?.get("body")?.toString() ?: "{}"
+                    val mediaType = "application/json; charset=utf-8".toMediaType()
+                    reqBuilder.post(bodyStr.toRequestBody(mediaType))
+                }
+            }
+            executeRequest(reqBuilder.build())
+        } catch (e: Exception) {
+            Log.e(TAG, "ajaxWithOptions error: ${e.message}")
+            ""
+        }
+    }
 
     /**
      * request() - GET 请求
@@ -281,8 +324,9 @@ class JsExtensions(
 
     fun get(key: String): Any? = store[key]
 
-    fun put(key: String, value: Any?) {
+    fun put(key: String, value: Any?): Any? {
         store[key] = value
+        return value
     }
 
     fun timeFormat(dateOrTimestamp: Any?): String {

@@ -50,6 +50,8 @@ class RhinoScriptEngine {
 
     private val scope: ImporterTopLevel
 
+    private var jsLibLoaded = false
+
     init {
         initFactory()
         val cx = Context.enter()
@@ -83,6 +85,29 @@ class RhinoScriptEngine {
             }
         } finally {
             Context.exit()
+        }
+    }
+
+    /**
+     * 加载 jsLib 代码（书源中定义的公共函数）
+     * 只执行一次，后续调用跳过
+     */
+    fun evalJsLib(jsLib: String?) {
+        if (jsLib.isNullOrBlank() || jsLibLoaded) return
+        try {
+            val cx = Context.enter()
+            try {
+                cx.optimizationLevel = -1
+                cx.languageVersion = Context.VERSION_ES6
+                cx.evaluateString(scope, jsLib, "jsLib", 1, null)
+                jsLibLoaded = true
+                Log.i(TAG, "jsLib 加载成功 (${jsLib.length} chars)")
+            } finally {
+                Context.exit()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "jsLib 加载失败: ${e.message}")
+            jsLibLoaded = true // 标记为已加载，避免重复尝试
         }
     }
 
